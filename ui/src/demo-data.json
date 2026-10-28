@@ -1,0 +1,402 @@
+{
+  "base": "main",
+  "branches": [
+    "main",
+    "feature/payment-validation"
+  ],
+  "diffs": [
+    {
+      "base_commit": "86d4418",
+      "binary": false,
+      "language": "python",
+      "modified": "from fastapi import APIRouter, Depends, HTTPException, Query, status\nfrom sqlalchemy.ext.asyncio import AsyncSession\n\nfrom app.api.deps import get_current_user, get_db\nfrom app.models.user import User\nfrom app.schemas.payment import PaymentRequest, PaymentResponse\nfrom app.services import payment_service\n\nrouter = APIRouter(prefix=\"/v1\", tags=[\"payments\"])\n\n\n@router.post(\"/payments\", response_model=PaymentResponse, status_code=201)\nasync def create_payment(\n    request: PaymentRequest,\n    db: AsyncSession = Depends(get_db),\n    current_user: User = Depends(get_current_user),\n):\n    payment = await payment_service.create(\n        db=db,\n        user_id=current_user.id,\n        amount=request.amount,\n        destination=request.destination,\n    )\n    return payment\n",
+      "old_path": null,
+      "original": "from fastapi import APIRouter, Depends, HTTPException, status\nfrom sqlalchemy.ext.asyncio import AsyncSession\n\nfrom app.api.deps import get_db\nfrom app.models.user import User\nfrom app.schemas.payment import PaymentCreate\nfrom app.services import payment_service\n\nrouter = APIRouter(prefix=\"/v1\", tags=[\"payments\"])\n\n\n@router.post(\"/payments\")\nasync def create_payment(payload: dict, db: AsyncSession = Depends(get_db)):\n    data = PaymentCreate(**payload)\n    if data.amount <= 0:\n        raise HTTPException(status.HTTP_400_BAD_REQUEST, \"invalid amount\")\n    payment = await payment_service.create(\n        db=db,\n        user_id=data.user_id,\n        amount=data.amount,\n        destination=data.destination,\n    )\n    return payment\n",
+      "path": "app/api/routes/payments.py",
+      "status": "M",
+      "target_commit": "6c598c0"
+    },
+    {
+      "base_commit": "86d4418",
+      "binary": false,
+      "language": "python",
+      "modified": "from fastapi import APIRouter, Depends, HTTPException, status\n\nfrom app.api.deps import get_current_user, get_db\nfrom app.models.user import User\nfrom app.schemas.refund import RefundRequest, RefundResponse\nfrom app.services import payment_service, refund_service\n\nrouter = APIRouter(prefix=\"/v1\", tags=[\"refunds\"])\n\n\n@router.post(\"/refunds/{payment_id}\", response_model=RefundResponse)\nasync def create_refund(\n    payment_id: int,\n    body: RefundRequest,\n    db=Depends(get_db),\n    current_user: User = Depends(get_current_user),\n):\n    payment = await payment_service.get(db, payment_id)\n    if payment is None:\n        raise HTTPException(status.HTTP_404_NOT_FOUND)\n    return await refund_service.refund(db, payment, amount=body.amount)\n",
+      "old_path": null,
+      "original": "from fastapi import APIRouter, Depends, HTTPException, status\n\nfrom app.api.deps import get_current_user, get_db\nfrom app.models.user import User\nfrom app.schemas.refund import RefundResponse\nfrom app.services import payment_service, refund_service\n\nrouter = APIRouter(prefix=\"/v1\", tags=[\"refunds\"])\n\n\n@router.post(\"/refunds/{payment_id}\", response_model=RefundResponse)\nasync def create_refund(\n    payment_id: int,\n    db=Depends(get_db),\n    current_user: User = Depends(get_current_user),\n):\n    payment = await payment_service.get_for_user(db, payment_id, current_user.id)\n    if payment is None:\n        raise HTTPException(status.HTTP_404_NOT_FOUND)\n    return await refund_service.refund(db, payment)\n",
+      "path": "app/api/routes/refunds.py",
+      "status": "M",
+      "target_commit": "6c598c0"
+    },
+    {
+      "base_commit": "86d4418",
+      "binary": false,
+      "language": "python",
+      "modified": "from sqlalchemy import text\n\n\nasync def search_payments(db, user_id: int, q: str):\n    stmt = text(\n        f\"SELECT * FROM payments WHERE user_id = :uid AND reference ILIKE '%{q}%'\"\n    )\n    return await db.execute(stmt, {\"uid\": user_id})\n",
+      "old_path": null,
+      "original": "from sqlalchemy import text\n\n\nasync def search_payments(db, user_id: int, q: str):\n    stmt = text(\"SELECT * FROM payments WHERE user_id = :uid AND reference ILIKE :q\")\n    return await db.execute(stmt, {\"uid\": user_id, \"q\": f\"%{q}%\"})\n",
+      "path": "app/db/queries.py",
+      "status": "M",
+      "target_commit": "6c598c0"
+    },
+    {
+      "base_commit": "86d4418",
+      "binary": false,
+      "language": "python",
+      "modified": "import jwt\n\nfrom config.settings import settings\n\n\ndef decode_token(token: str) -> dict:\n    return jwt.decode(\n        token,\n        settings.JWT_SECRET,\n        algorithms=[\"HS256\"],\n        audience=settings.JWT_AUDIENCE,\n    )\n",
+      "old_path": "app/services/auth.py",
+      "original": "import jwt\n\nfrom config.settings import settings\n\n\ndef decode_token(token: str) -> dict:\n    return jwt.decode(\n        token,\n        settings.JWT_SECRET,\n        algorithms=[\"HS256\"],\n        audience=\"payments-api\",\n    )\n",
+      "path": "app/services/auth_service.py",
+      "status": "R",
+      "target_commit": "6c598c0"
+    },
+    {
+      "base_commit": "86d4418",
+      "binary": false,
+      "language": "python",
+      "modified": "import logging\nfrom decimal import Decimal\n\nfrom app.models import Payment\nfrom app.services import accounts\n\nlog = logging.getLogger(__name__)\n\n\nclass PaymentError(Exception):\n    pass\n\n\nasync def create(db, *, user_id: int, amount: Decimal, destination: str) -> Payment:\n    account = await accounts.resolve(db, destination)\n    if account is None:\n        raise PaymentError(\"unknown destination\")\n    payment = Payment(user_id=user_id, amount=amount, account_id=account.id)\n    db.add(payment)\n    await db.flush()\n    log.info(\"payment created id=%s amount=%s dest=%s\", payment.id, amount, destination)\n    return payment\n\n\nasync def get(db, payment_id: int):\n    return await db.get(Payment, payment_id)\n\n\nasync def get_for_user(db, payment_id: int, user_id: int):\n    payment = await db.get(Payment, payment_id)\n    if payment is None or payment.user_id != user_id:\n        return None\n    return payment\n",
+      "old_path": null,
+      "original": "import logging\nfrom decimal import Decimal\n\nfrom app.models import Payment\nfrom app.services import accounts\n\nlog = logging.getLogger(__name__)\n\n\nclass PaymentError(Exception):\n    pass\n\n\nasync def create(db, *, user_id: int, amount: Decimal, destination: str) -> Payment:\n    account = await accounts.resolve(db, destination)\n    if account is None or not account.is_verified:\n        raise PaymentError(\"destination not verified\")\n    payment = Payment(user_id=user_id, amount=amount, account_id=account.id)\n    db.add(payment)\n    await db.flush()\n    log.info(\"payment created id=%s\", payment.id)\n    return payment\n\n\nasync def get(db, payment_id: int):\n    return await db.get(Payment, payment_id)\n\n\nasync def get_for_user(db, payment_id: int, user_id: int):\n    payment = await db.get(Payment, payment_id)\n    if payment is None or payment.user_id != user_id:\n        return None\n    return payment\n",
+      "path": "app/services/payment_service.py",
+      "status": "M",
+      "target_commit": "6c598c0"
+    },
+    {
+      "base_commit": "86d4418",
+      "binary": false,
+      "language": "python",
+      "modified": "from decimal import Decimal\n\nfrom pydantic_settings import BaseSettings\n\n\nclass Settings(BaseSettings):\n    DATABASE_URL: str\n    JWT_SECRET: str\n    JWT_AUDIENCE: str = \"payments-api\"\n    PAYMENT_MAX_AMOUNT: Decimal = Decimal(\"10000\")\n    DEBUG: bool = False\n\n\nsettings = Settings()\n",
+      "old_path": null,
+      "original": "from decimal import Decimal\n\nfrom pydantic_settings import BaseSettings\n\n\nclass Settings(BaseSettings):\n    DATABASE_URL: str\n    JWT_SECRET: str\n    DEBUG: bool = False\n\n\nsettings = Settings()\n",
+      "path": "config/settings.py",
+      "status": "M",
+      "target_commit": "6c598c0"
+    },
+    {
+      "base_commit": "86d4418",
+      "binary": false,
+      "language": "plaintext",
+      "modified": "fastapi==0.110.0\npydantic==2.7.1\nsqlalchemy[asyncio]==2.0.29\nrequests==2.32.3\nhttpx==0.27.0\npython-multipart==0.0.6\npyjwt==2.8.0\n",
+      "old_path": null,
+      "original": "fastapi==0.110.0\npydantic==2.5.3\nsqlalchemy[asyncio]==2.0.29\nrequests==2.31.0\nhttpx==0.27.0\npython-multipart==0.0.6\npyjwt==2.8.0\n",
+      "path": "requirements.txt",
+      "status": "M",
+      "target_commit": "6c598c0"
+    },
+    {
+      "base_commit": "86d4418",
+      "binary": false,
+      "language": "python",
+      "modified": "import pytest\nfrom httpx import AsyncClient\n\nTEST_API_KEY = \"test_key_4f2a9c0e1b7d\"\n\n\n@pytest.mark.asyncio\nasync def test_create_payment_uses_authenticated_user(client: AsyncClient, user_token):\n    resp = await client.post(\n        \"/v1/payments\",\n        json={\"amount\": \"12.50\", \"destination\": \"acct_demo_001\"},\n        headers={\"Authorization\": f\"Bearer {user_token}\"},\n    )\n    assert resp.status_code == 201\n",
+      "old_path": null,
+      "original": null,
+      "path": "tests/test_payments.py",
+      "status": "A",
+      "target_commit": "6c598c0"
+    }
+  ],
+  "files": [
+    {
+      "additions": 12,
+      "binary": false,
+      "deletions": 11,
+      "old_path": null,
+      "path": "app/api/routes/payments.py",
+      "status": "M"
+    },
+    {
+      "additions": 4,
+      "binary": false,
+      "deletions": 3,
+      "old_path": null,
+      "path": "app/api/routes/refunds.py",
+      "status": "M"
+    },
+    {
+      "additions": 4,
+      "binary": false,
+      "deletions": 2,
+      "old_path": null,
+      "path": "app/db/queries.py",
+      "status": "M"
+    },
+    {
+      "additions": 1,
+      "binary": false,
+      "deletions": 1,
+      "old_path": "app/services/auth.py",
+      "path": "app/services/auth_service.py",
+      "status": "R"
+    },
+    {
+      "additions": 3,
+      "binary": false,
+      "deletions": 3,
+      "old_path": null,
+      "path": "app/services/payment_service.py",
+      "status": "M"
+    },
+    {
+      "additions": 2,
+      "binary": false,
+      "deletions": 0,
+      "old_path": null,
+      "path": "config/settings.py",
+      "status": "M"
+    },
+    {
+      "additions": 2,
+      "binary": false,
+      "deletions": 2,
+      "old_path": null,
+      "path": "requirements.txt",
+      "status": "M"
+    },
+    {
+      "additions": 14,
+      "binary": false,
+      "deletions": 0,
+      "old_path": null,
+      "path": "tests/test_payments.py",
+      "status": "A"
+    }
+  ],
+  "findings": [
+    {
+      "category": "Access control",
+      "cwe": "CWE-639: Authorization Bypass Through User-Controlled Key",
+      "end_line": 18,
+      "file": "app/api/routes/refunds.py",
+      "fingerprint": "c5479b3361e8862d2efcdebd",
+      "first_seen": 1793246582,
+      "id": 1,
+      "last_seen": 1793246582,
+      "line": 18,
+      "message": "An object is looked up by an id from the path while an authenticated user is available, but the lookup does not take the user. Check that ownership is enforced before the object is used.",
+      "note_count": 0,
+      "project_id": 1,
+      "rev": "feature/payment-validation",
+      "rule_id": "acrw.python.fastapi.unscoped-object-lookup",
+      "scan_run_id": 1,
+      "scanner": "Semgrep",
+      "severity": "medium",
+      "snippet": "    payment = await payment_service.get(db, payment_id)",
+      "status": "New",
+      "title": "Missing ownership check on object lookup",
+      "trace": null
+    },
+    {
+      "category": "Injection",
+      "cwe": "CWE-89: SQL Injection",
+      "end_line": 6,
+      "file": "app/db/queries.py",
+      "fingerprint": "b97050590702998ae022a196",
+      "first_seen": 1793246582,
+      "id": 2,
+      "last_seen": 1793246582,
+      "line": 6,
+      "message": "A function argument reaches a raw SQL statement without being bound as a parameter. Whether it is user-controlled depends on the callers.",
+      "note_count": 0,
+      "project_id": 1,
+      "rev": "feature/payment-validation",
+      "rule_id": "acrw.python.param-to-raw-sql",
+      "scan_run_id": 1,
+      "scanner": "Semgrep",
+      "severity": "high",
+      "snippet": "        f\"SELECT * FROM payments WHERE user_id = :uid AND reference ILIKE '%{q}%'\"",
+      "status": "New",
+      "title": "Potential SQL injection: argument in raw SQL",
+      "trace": {
+        "sink": {
+          "content": "f\"SELECT * FROM payments WHERE user_id = :uid AND reference ILIKE '%{q}%'\"",
+          "file": "app/db/queries.py",
+          "line": 6
+        },
+        "source": {
+          "content": "async def search_payments(db, user_id: int, q: str):",
+          "file": "app/db/queries.py",
+          "line": 4
+        },
+        "steps": []
+      }
+    },
+    {
+      "category": "Injection",
+      "cwe": "CWE-89: SQL Injection",
+      "end_line": 8,
+      "file": "app/db/queries.py",
+      "fingerprint": "4b617868db35db49d3f6f1b0",
+      "first_seen": 1793246582,
+      "id": 3,
+      "last_seen": 1793246582,
+      "line": 8,
+      "message": "A function argument reaches a raw SQL statement without being bound as a parameter. Whether it is user-controlled depends on the callers.",
+      "note_count": 0,
+      "project_id": 1,
+      "rev": "feature/payment-validation",
+      "rule_id": "acrw.python.param-to-raw-sql",
+      "scan_run_id": 1,
+      "scanner": "Semgrep",
+      "severity": "high",
+      "snippet": "    return await db.execute(stmt, {\"uid\": user_id})",
+      "status": "New",
+      "title": "Potential SQL injection: argument in raw SQL",
+      "trace": {
+        "sink": {
+          "content": "return await db.execute(stmt, {\"uid\": user_id})",
+          "file": "app/db/queries.py",
+          "line": 8
+        },
+        "source": {
+          "content": "async def search_payments(db, user_id: int, q: str):",
+          "file": "app/db/queries.py",
+          "line": 4
+        },
+        "steps": [
+          {
+            "content": "stmt = text(",
+            "file": "app/db/queries.py",
+            "line": 5
+          }
+        ]
+      }
+    },
+    {
+      "category": "Sensitive data",
+      "cwe": "CWE-532: Insertion of Sensitive Information into Log File",
+      "end_line": 21,
+      "file": "app/services/payment_service.py",
+      "fingerprint": "d86356da00c576ac93559da7",
+      "first_seen": 1793246582,
+      "id": 4,
+      "last_seen": 1793246582,
+      "line": 21,
+      "message": "A payment or account identifier is written to the application log.",
+      "note_count": 0,
+      "project_id": 1,
+      "rev": "feature/payment-validation",
+      "rule_id": "acrw.python.sensitive-arg-in-log",
+      "scan_run_id": 1,
+      "scanner": "Semgrep",
+      "severity": "info",
+      "snippet": "    log.info(\"payment created id=%s amount=%s dest=%s\", payment.id, amount, destination)",
+      "status": "New",
+      "title": "Account identifier written to logs",
+      "trace": {
+        "sink": {
+          "content": "log.info(\"payment created id=%s amount=%s dest=%s\", payment.id, amount, destination)",
+          "file": "app/services/payment_service.py",
+          "line": 21
+        },
+        "source": {
+          "content": "async def create(db, *, user_id: int, amount: Decimal, destination: str) -> Payment:",
+          "file": "app/services/payment_service.py",
+          "line": 14
+        },
+        "steps": []
+      }
+    },
+    {
+      "category": "Secrets",
+      "cwe": "CWE-798",
+      "end_line": 4,
+      "file": "tests/test_payments.py",
+      "fingerprint": "5fd4d13ee4846b7c1aaf0f71",
+      "first_seen": 1793246583,
+      "id": 5,
+      "last_seen": 1793246583,
+      "line": 4,
+      "message": "Detected a Generic API Key, potentially exposing access to various services and sensitive operations. The value is redacted; verify whether it is live before rotating.",
+      "note_count": 0,
+      "project_id": 1,
+      "rev": "feature/payment-validation",
+      "rule_id": "generic-api-key",
+      "scan_run_id": 2,
+      "scanner": "Gitleaks",
+      "severity": "high",
+      "snippet": "TEST_API_KEY = \"test••••••••\"",
+      "status": "New",
+      "title": "Potential hardcoded secret: generic-api-key",
+      "trace": null
+    },
+    {
+      "category": "Dependency",
+      "cwe": "CWE-1333",
+      "end_line": 6,
+      "file": "requirements.txt",
+      "fingerprint": "f207f8e184eabd6726eff653",
+      "first_seen": 1793246583,
+      "id": 6,
+      "last_seen": 1793246583,
+      "line": 6,
+      "message": "python-multipart 0.0.6 is affected by CVE-2024-24762. Fixed in 0.0.7. Regular expression denial of service in Content-Type parsing (https://avd.aquasec.com/nvd/cve-2024-24762)",
+      "note_count": 0,
+      "project_id": 1,
+      "rev": "feature/payment-validation",
+      "rule_id": "CVE-2024-24762",
+      "scan_run_id": 3,
+      "scanner": "Trivy",
+      "severity": "high",
+      "snippet": "python-multipart==0.0.6",
+      "status": "New",
+      "title": "Vulnerable dependency: python-multipart 0.0.6",
+      "trace": null
+    }
+  ],
+  "scans": [
+    {
+      "command": "trivy fs --scanners vuln --format json .",
+      "commit": "6c598c0",
+      "error": null,
+      "exit_code": 0,
+      "finding_count": 1,
+      "finished_at": 1793246583,
+      "id": 3,
+      "log": "demo dataset: parsed from a recorded Trivy report\n",
+      "new_count": 1,
+      "profile": "Dependencies",
+      "project_id": 1,
+      "rev": "feature/payment-validation",
+      "scanner": "Trivy",
+      "started_at": 1793246583,
+      "status": "completed",
+      "version": "0.56.2"
+    },
+    {
+      "command": "gitleaks dir . --report-format json --report-path /tmp/acrw-demo-export/run-2/gitleaks.json --redact --no-banner --exit-code 0",
+      "commit": "6c598c0",
+      "error": null,
+      "exit_code": 0,
+      "finding_count": 1,
+      "finished_at": 1793246583,
+      "id": 2,
+      "log": "checking out feature/payment-validation into a temporary worktree\nGitleaks 8.21.2 on feature/payment-validation@6c598c0\n9:03AM INF scan completed in 7.62ms\n9:03AM WRN leaks found: 1\n1 findings (1 new)\n",
+      "new_count": 1,
+      "profile": "Working tree",
+      "project_id": 1,
+      "rev": "feature/payment-validation",
+      "scanner": "Gitleaks",
+      "started_at": 1793246566,
+      "status": "completed",
+      "version": "8.21.2"
+    },
+    {
+      "command": "semgrep scan --metrics=off --disable-version-check --dataflow-traces --quiet --config /tmp/acrw-demo-export/run-1/rules/acrw-python.yml --json-output=/tmp/acrw-demo-export/run-1/semgrep.json --text-output=/tmp/acrw-demo-export/run-1/semgrep.txt .",
+      "commit": "6c598c0",
+      "error": null,
+      "exit_code": 0,
+      "finding_count": 4,
+      "finished_at": 1793246582,
+      "id": 1,
+      "log": "checking out feature/payment-validation into a temporary worktree\nSemgrep 1.182.1 on feature/payment-validation@6c598c0\n┌─────────────────┐\n│ 4 Code Findings │\n└─────────────────┘\n    app/api/routes/refunds.py\n    ❯❱ tmp.acrw-demo-export.run-1.rules.acrw.python.fastapi.unscoped-object-lookup\n          ❰❰ Blocking ❱❱\n          An object is looked up by an id from the path while an authenticated user is available, but the\n          lookup does not take the user. Check that ownership is enforced before the object is used.\n           18┆ payment = await payment_service.get(db, payment_id)\n    app/db/queries.py\n   ❯❯❱ tmp.acrw-demo-export.run-1.rules.acrw.python.param-to-raw-sql\n          ❰❰ Blocking ❱❱\n          A function argument reaches a raw SQL statement without being bound as a parameter. Whether it is\n          user-controlled depends on the callers.\n            6┆ f\"SELECT * FROM payments WHERE user_id = :uid AND reference ILIKE '%{q}%'\"\n          Taint comes from:\n            4┆ async def search_payments(db, user_id: int, q: str):\n          Taint flows through these intermediate variables:\n            4┆ async def search_payments(db, user_id: int, q: str):\n                This is how taint reaches the sink:\n            6┆ f\"SELECT * FROM payments WHERE user_id = :uid AND reference ILIKE '%{q}%'\"\n            ⋮┆----------------------------------------\n            8┆ return await db.execute(stmt, {\"uid\": user_id})\n          Taint comes from:\n            4┆ async def search_payments(db, user_id: int, q: str):\n          Taint flows through these intermediate variables:\n            4┆ async def search_payments(db, user_id: int, q: str):\n            5┆ stmt = text(\n                This is how taint reaches the sink:\n            8┆ return await db.execute(stmt, {\"uid\": user_id})\n    app/services/payment_service.py\n     ❱ tmp.acrw-demo-export.run-1.rules.acrw.python.sensitive-arg-in-log\n          ❰❰ Blocking ❱❱\n          A payment or account identifier is written to the application log.\n           21┆ log.info(\"payment created id=%s amount=%s dest=%s\", payment.id, amount, destination)\n          Taint comes from:\n           14┆ async def create(db, *, user_id: int, amount: Decimal, destination: str) -> Payment:\n          Taint flows through these intermediate variables:\n           14┆ async def create(db, *, user_id: int, amount: Decimal, destination: str) -> Payment:\n                This is how taint reaches the sink:\n           21┆ log.info(\"payment created id=%s amount=%s dest=%s\", payment.id, amount, destination)\n4 findings (4 new)\n",
+      "new_count": 4,
+      "profile": "Configured rules",
+      "project_id": 1,
+      "rev": "feature/payment-validation",
+      "scanner": "Semgrep",
+      "started_at": 1793246566,
+      "status": "completed",
+      "version": "1.182.1"
+    }
+  ],
+  "target": "feature/payment-validation"
+}

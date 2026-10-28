@@ -1,0 +1,7 @@
+/target
+node_modules
+/ui/dist
+/demo
+*.db
+.DS_Store
+src-tauri/gen

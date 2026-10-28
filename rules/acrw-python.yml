@@ -1,0 +1,119 @@
+# ACRW bundled Semgrep rules for Python services.
+# Taint rules produce dataflow traces that the Source → sink explorer draws.
+# Semgrep OSS taint analysis is intraprocedural: a trace starts at the first
+# point inside one function where the value is untrusted.
+rules:
+  - id: acrw.python.param-to-raw-sql
+    mode: taint
+    languages: [python]
+    severity: ERROR
+    message: >-
+      A function argument reaches a raw SQL statement without being bound as a
+      parameter. Whether it is user-controlled depends on the callers.
+    metadata:
+      category: Injection
+      cwe: "CWE-89: SQL Injection"
+      title: "Potential SQL injection: argument in raw SQL"
+    pattern-sources:
+      - patterns:
+          - pattern-inside: |
+              def $F(..., $P, ...):
+                ...
+          - focus-metavariable: $P
+      - patterns:
+          - pattern-inside: |
+              async def $F(..., $P, ...):
+                ...
+          - focus-metavariable: $P
+    pattern-sanitizers:
+      - pattern: int(...)
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: sqlalchemy.text($Q)
+              - pattern: text($Q)
+              - pattern: $C.execute($Q, ...)
+          - focus-metavariable: $Q
+          - pattern-not: |
+              "..."
+
+  - id: acrw.python.fastapi.request-to-sql
+    mode: taint
+    languages: [python]
+    severity: ERROR
+    message: A FastAPI request parameter reaches a raw SQL statement.
+    metadata:
+      category: Injection
+      cwe: "CWE-89: SQL Injection"
+      title: "SQL injection: request parameter in raw SQL"
+    pattern-sources:
+      - patterns:
+          - pattern-inside: |
+              @$R.$M(...)
+              async def $F(..., $P, ...):
+                ...
+          - focus-metavariable: $P
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: text($Q)
+              - pattern: $C.execute($Q, ...)
+          - focus-metavariable: $Q
+          - pattern-not: |
+              "..."
+
+  - id: acrw.python.fastapi.unscoped-object-lookup
+    languages: [python]
+    severity: WARNING
+    message: >-
+      An object is looked up by an id from the path while an authenticated user
+      is available, but the lookup does not take the user. Check that ownership
+      is enforced before the object is used.
+    metadata:
+      category: Access control
+      cwe: "CWE-639: Authorization Bypass Through User-Controlled Key"
+      title: "Missing ownership check on object lookup"
+    patterns:
+      - pattern-inside: |
+          @$R.$M("$PATH", ...)
+          async def $F(..., $ID: int, ..., $U: $T = Depends(get_current_user), ...):
+            ...
+      - metavariable-regex:
+          metavariable: $PATH
+          regex: .*\{\w+\}.*
+      - pattern: await $SVC.get($DB, $ID)
+
+  - id: acrw.python.sensitive-arg-in-log
+    mode: taint
+    languages: [python]
+    severity: INFO
+    message: A payment or account identifier is written to the application log.
+    metadata:
+      category: Sensitive data
+      cwe: "CWE-532: Insertion of Sensitive Information into Log File"
+      title: "Account identifier written to logs"
+    pattern-sources:
+      - patterns:
+          - pattern-inside: |
+              async def $F(..., $P, ...):
+                ...
+          - focus-metavariable: $P
+          - metavariable-regex:
+              metavariable: $P
+              regex: (?i).*(destination|account|iban|card|pan).*
+    pattern-sinks:
+      - pattern-either:
+          - pattern: $LOG.info(...)
+          - pattern: $LOG.debug(...)
+          - pattern: $LOG.warning(...)
+
+  - id: acrw.python.jwt-unverified-decode
+    languages: [python]
+    severity: ERROR
+    message: jwt.decode is called with signature verification disabled.
+    metadata:
+      category: Authentication
+      cwe: "CWE-347: Improper Verification of Cryptographic Signature"
+      title: "JWT decoded without signature verification"
+    pattern: |
+      jwt.decode(..., options={..., "verify_signature": False, ...}, ...)

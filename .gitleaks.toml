@@ -1,0 +1,9 @@
+# Gitleaks config for scanning the ACRW repository itself.
+# The demo repository generator contains an intentional fake key so the
+# Gitleaks integration has something to find.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Intentional demo fixtures"
+paths = ['''scripts/make-demo-repo\.sh''', '''ui/src/demo-data\.json''']

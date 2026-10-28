@@ -1,0 +1,43 @@
+name: Bug report
+description: Something in ACRW does not work as expected
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what you saw instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open repository …
+        2. Compare main...feature/x
+        3. …
+  - type: input
+    id: version
+    attributes:
+      label: ACRW version or commit
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options: [macOS, Windows, Linux]
+    validations:
+      required: true
+  - type: input
+    id: scanners
+    attributes:
+      label: Scanner versions (if relevant)
+      placeholder: semgrep 1.94.0, trivy 0.56.2, gitleaks 8.21.2
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or scan output
+      description: Redact secrets and private code before pasting.
+      render: text

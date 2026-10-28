@@ -1,0 +1,7 @@
+[workspace]
+resolver = "2"
+members = ["crates/acrw-core", "src-tauri"]
+
+[profile.release]
+lto = "thin"
+codegen-units = 4

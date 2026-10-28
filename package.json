@@ -1,0 +1,17 @@
+{
+  "name": "acrw",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "setup": "npm install && npm --prefix ui install",
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "ui": "npm --prefix ui run dev",
+    "demo-repo": "bash scripts/make-demo-repo.sh",
+    "tauri": "tauri"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.12.4"
+  },
+  "license": "Apache-2.0"
+}

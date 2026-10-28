@@ -1,0 +1,7 @@
+ACRW — A Crow Review Workbench
+Copyright 2026 Ramazan and the ACRW contributors
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+ACRW runs Semgrep, Trivy and Gitleaks as separate, user-installed programs.
+They are not distributed with ACRW and remain under their own licenses.
